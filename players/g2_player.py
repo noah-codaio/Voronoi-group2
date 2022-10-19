@@ -3,8 +3,9 @@ import os
 import pickle
 from turtle import home
 from matplotlib import units
-from matplotlib.pyplot import close
+from matplotlib.pyplot import close, xscale
 import numpy as np
+from sklearn import neighbors
 import sympy
 import logging
 from typing import Tuple, List, Dict
@@ -20,12 +21,12 @@ import heapq
 #HYPER PARAMETERS
 DANGER_ZONE_RADIUS = 20
 
-DETECTION_RADIUS = 15
-DELTA_RADIUS = 2
+DETECTION_RADIUS = 30
+DELTA_RADIUS = 4
 
 #SCISSOR STARTING OUTER RADIUS
 OUTER_RADIUS = 50
-INNER_RADIUS = OUTER_RADIUS-3
+INNER_RADIUS = OUTER_RADIUS-4
 
 OUTER_SPEED = 1
 INNER_SPEED = 1
@@ -35,12 +36,15 @@ SCISSOR_ZONE_COUNT = 3
 REGION_INCREMENT = 0.5
 
 #priority of regions
-if SCISSOR_ZONE_COUNT == 5:
-    PRIORITY_ID_OUTER = [4,2,0,1,3]
-    PRIORITY_ID_INNER = [9,7,5,6,8]
-elif SCISSOR_ZONE_COUNT == 6:
+if SCISSOR_ZONE_COUNT == 6:
     PRIORITY_ID_OUTER = [4,2,0,1,3,5]
     PRIORITY_ID_INNER = [11,9,7,8,10,12]
+elif SCISSOR_ZONE_COUNT == 5:
+    PRIORITY_ID_OUTER = [4,2,0,1,3]
+    PRIORITY_ID_INNER = [9,7,5,6,8]
+elif SCISSOR_ZONE_COUNT == 4:
+    PRIORITY_ID_OUTER = [2,0,1,3]
+    PRIORITY_ID_INNER = [9,7,8,10]
 elif SCISSOR_ZONE_COUNT == 3:
     #priority of regions for 3 zones
     PRIORITY_ID_OUTER = [2,0,1]
@@ -53,10 +57,10 @@ class ScissorRegion:
     def __init__(self, bounds, delta_bounds, detection_bounds, id, player_idx, angles, radius, speed):
 
         #bounds are the two points defining the scissor ends of the lines
-        self.detection_bounds: Tuple[Tuple[float, float],Tuple[float, float]] = detection_bounds
-        self.bounds: Tuple[Tuple[float, float],Tuple[float, float]] = bounds
-        self.delta_bounds: Tuple[Tuple[float, float],Tuple[float, float]] = delta_bounds
-        self.center_point: Tuple[float, float] = self.find_cp((self.find_cp(bounds), self.find_cp(delta_bounds)))
+        self.detection_bounds: List[Tuple[float, float],Tuple[float, float]] = detection_bounds
+        self.bounds: List[Tuple[float, float],Tuple[float, float]] = bounds
+        self.delta_bounds: List[Tuple[float, float],Tuple[float, float]] = delta_bounds
+        self.center_points: List[Tuple[float, float]] = [self.find_cp((self.bounds[0], self.delta_bounds[0])),self.find_cp((self.bounds[1], self.delta_bounds[1]))]
         self.angles: List[float, float] = angles
 
         #0 means go to bound[0]
@@ -80,7 +84,7 @@ class ScissorRegion:
     #call everyturn
     def update_targets(self, units, unit_pos):
 
-        self.target_point = self.bounds[self.direction]
+        self.target_point = self.center_points[self.direction]
 
         #assume units are sorted here
         #units in u_id are in the region
@@ -105,8 +109,8 @@ class ScissorRegion:
 
         density = max((self.radius-OUTER_RADIUS)//10, 2)
 
-        target_x = np.linspace(target[0], opposite[0], n+2)
-        target_y = np.linspace(target[1], opposite[1], n+2)
+        target_x = np.linspace(target[0], opposite[0], n+3)
+        target_y = np.linspace(target[1], opposite[1], n+3)
 
         result = {}
 
@@ -122,7 +126,7 @@ class ScissorRegion:
         self.detection_polygon = Polygon([get_corner_coords(self.player_idx), self.detection_bounds[1], self.detection_bounds[0]])
 
     def find_cp(self, bounds):
-        return ((bounds[0][0]+bounds[1][0])/2 , (bounds[0][1]+bounds[1][1])/2)
+        return [(bounds[0][0]+bounds[1][0])/2 , (bounds[0][1]+bounds[1][1])/2]
 
     def changeDirection(self):
         #print("DIRECTION CHANGED")
@@ -153,7 +157,7 @@ class ScissorRegion:
         self.delta_bounds = increment_bounds(self.delta_bounds, increment_l, increment_r)
         self.detection_bounds = increment_bounds(self.detection_bounds, increment_l, increment_r)
 
-        self.center_point: Tuple[float, float] = self.find_cp((self.find_cp(self.bounds), self.find_cp(self.delta_bounds)))
+        self.center_points: List[Tuple[float, float]] = [self.find_cp((self.bounds[0], self.delta_bounds[0])),self.find_cp((self.bounds[1], self.delta_bounds[1]))]
         self.update_polygons()
 
         if self.connected_scissor_region is not None:
@@ -170,7 +174,38 @@ class ScissorRegion:
         self.delta_bounds = increment_bounds(self.delta_bounds, increment_l, increment_r)
         self.detection_bounds = increment_bounds(self.detection_bounds, increment_l, increment_r)
 
-        self.center_point: Tuple[float, float] = self.find_cp((self.find_cp(self.bounds), self.find_cp(self.delta_bounds)))
+        self.center_points: List[Tuple[float, float]] = [self.find_cp((self.bounds[0], self.delta_bounds[0])),self.find_cp((self.bounds[1], self.delta_bounds[1]))]
+        self.update_polygons()
+
+    def changeAngle(self, bound_idx, angle_increment):
+
+        curr_angle = self.angles[bound_idx]
+        new_angle = curr_angle + angle_increment
+        self.angles[bound_idx] = new_angle
+
+        home = get_corner_coords(self.player_idx)
+        new_bound = (self.radius*math.cos(new_angle)+home[0], self.radius*math.sin(new_angle)+home[1])
+        new_delta_bound = ((self.radius-DELTA_RADIUS)*math.cos(new_angle)+home[0], (self.radius-DELTA_RADIUS)*math.sin(new_angle)+home[1])
+
+        self.bounds[bound_idx] = new_bound
+        self.delta_bounds[bound_idx] = new_delta_bound
+        self.update_polygons()
+
+        if self.connected_scissor_region is not None:
+            self.connected_scissor_region.changeAngleHelper(bound_idx, angle_increment)
+    
+    def changeAngle(self, bound_idx, angle_increment):
+
+        curr_angle = self.angles[bound_idx]
+        new_angle = curr_angle + angle_increment
+        self.angles[bound_idx] = new_angle
+
+        home = get_corner_coords(self.player_idx)
+        new_bound = (self.radius*math.cos(new_angle)+home[0], self.radius*math.sin(new_angle)+home[1])
+        new_delta_bound = ((self.radius-DELTA_RADIUS)*math.cos(new_angle)+home[0], (self.radius-DELTA_RADIUS)*math.sin(new_angle)+home[1])
+
+        self.bounds[bound_idx] = new_bound
+        self.delta_bounds[bound_idx] = new_delta_bound
         self.update_polygons()
 
     def __hash__(self):
@@ -190,17 +225,17 @@ def find_increment(new_radius, a):
     return new_point
 
 def increment_bounds(bound, incrementl, incrementr):
-    return ((bound[0][0]+incrementl[0], bound[0][1]+incrementl[1]),(bound[1][0]+incrementr[0], bound[1][1]+incrementr[1]))
+    return [(bound[0][0]+incrementl[0], bound[0][1]+incrementl[1]),(bound[1][0]+incrementr[0], bound[1][1]+incrementr[1])]
 
 def get_corner_coords(team_idx):
     if team_idx == 0:
-        return Point(0, 0)
+        return (0, 0)
     elif team_idx == 1:
-        return Point(0, 100)
+        return (0, 100)
     elif team_idx == 2:
-        return Point(100, 100)
+        return (100, 100)
     elif team_idx == 3:
-        return Point(100, 0)
+        return (100, 0)
 
 def create_bounds(radius_from_origin, team_idx):
 
@@ -214,7 +249,7 @@ def create_bounds(radius_from_origin, team_idx):
     bounds = []
 
     for a in angles:
-        bounds.append((radius_from_origin*math.cos(a)+home.x,radius_from_origin*math.sin(a)+home.y))
+        bounds.append((radius_from_origin*math.cos(a)+home[0],radius_from_origin*math.sin(a)+home[1]))
 
     return bounds, angles
 
@@ -236,7 +271,7 @@ def create_scissor_regions(radius, team_idx, prio_idx, speed):
         dtct_l = detection_bounds[i]
         dtct_r = detection_bounds[i+1]
 
-        regions.append(ScissorRegion((left_bound, right_bound), (dl, dr), (dtct_l, dtct_r), prio_idx[i], team_idx, [a[i], a[i+1]], radius, speed))
+        regions.append(ScissorRegion([left_bound, right_bound], [dl, dr], [dtct_l, dtct_r], prio_idx[i], team_idx, [a[i], a[i+1]], radius, speed))
 
     return regions
 
@@ -343,6 +378,10 @@ class Player:
 
         self.regions = create_scissor_regions(OUTER_RADIUS, player_idx, PRIORITY_ID_OUTER, OUTER_SPEED)
         self.regions += create_scissor_regions(INNER_RADIUS, player_idx, PRIORITY_ID_INNER, INNER_SPEED)
+
+        self.id_to_region = {}
+        for r in self.regions:
+            self.id_to_region[r.id] = r
 
         for idx in range(SCISSOR_ZONE_COUNT):
             self.regions[idx].connected_scissor_region = self.regions[idx+SCISSOR_ZONE_COUNT]
@@ -688,14 +727,42 @@ class Player:
 
     def sentinel_moves(self, unit_ids) -> Dict[float, Tuple[float, float]]:
 
-        moves = {}
-        enemy_count = self.enemy_count_in_region()
+        #check if any outer region is significantly lower than a different region
+        #this means there is potential for a neighboring outer to
 
         region_contains_id, uid_in_region = self.regions_contain_id(unit_ids)
+        enemy_count = self.enemy_count_in_region()
 
-        #move units in regions
-        #scissor motion
-        #if unit is in a point
+        for i in range(len(PRIORITY_ID_OUTER)):
+            curr_region = self.id_to_region[PRIORITY_ID_OUTER[i]]
+            curr_radius = curr_region.radius
+
+            left_neighbor = i-1 if i-1 >= 0 else None
+            right_neighbor = i+1 if i+1 < len(PRIORITY_ID_OUTER) else None
+
+            if left_neighbor is not None:
+                left_r = self.id_to_region[PRIORITY_ID_OUTER[left_neighbor]]
+                if left_r.radius-curr_radius >= 20 and left_r in region_contains_id:
+                    print("angle change")
+
+                    #increment bound tighter on strong region
+                    left_r.changeAngle(1, 1)
+
+                    #decremenent bound on dire region
+                    curr_region.changeAngle(0, 1)
+
+            if right_neighbor is not None:
+                right_r = self.id_to_region[PRIORITY_ID_OUTER[right_neighbor]]
+                if right_r.radius-curr_radius >= 20 and right_r in region_contains_id:
+                    print("angle change")
+
+                    #increment bound tighter on strong region
+                    right_r.changeAngle(0, -1)
+
+                    #decremenent bound on dire region
+                    curr_region.changeAngle(1, -1)
+
+        moves = {}
 
         #check if which regions we need to change direction
         for r in region_contains_id:
@@ -727,9 +794,9 @@ class Player:
                 ally_count = unit_count_in_region+unit_count_in_inner_region
 
                 ally_net_players_inc = ally_count + len(self.regions_uid_otw[region]) - enemy_count[region]
-                ally_net_players_dec = (ally_count)*11 - enemy_count[region]
+                ally_net_players_dec = (unit_count_in_region+1)*11 - enemy_count[region]
 
-                if ally_net_players_inc >= 3 and region.radius < 70:
+                if ally_net_players_inc >= 3 and region.radius < 80:
 
                     #move region up
                     region.changeBounds(REGION_INCREMENT)
@@ -781,7 +848,7 @@ class Player:
 
             #if a unit is already commited to a region
             elif u_id in self.unit_commited_region:
-                moves[u_id] = self.point_move(curr, self.unit_commited_region[u_id].center_point)
+                moves[u_id] = self.point_move(curr, self.unit_commited_region[u_id].center_points[self.unit_commited_region[u_id].id%2])
 
             else:
                 #find the quadrant in need the most
@@ -791,7 +858,7 @@ class Player:
                 #send our u_id to a region
                 self.unit_otw_region[u_id] = dire_region
                 self.unit_commited_region[u_id] = dire_region
-                moves[u_id] = self.point_move(curr, self.unit_otw_region[u_id].center_point)
+                moves[u_id] = self.point_move(curr, self.unit_otw_region[u_id].center_points[self.unit_commited_region[u_id].id%2])
 
                 #increment number of units otw to a region
                 self.regions_uid_otw[dire_region].add(u_id)
@@ -940,7 +1007,7 @@ class Player:
         self.enemy_in_region = enemy_in_region
         return count
 
-    #for a given unit, given by u
+    """#for a given unit, given by u
     def danger_score_of_point(self, np_unit_pos, u, team_idx, radius) -> float:
         distances = cdist([np.array((u.x, u.y))], np_unit_pos[:, :2]).flatten()
         close_points = np_unit_pos[distances <= radius,:]
@@ -969,7 +1036,7 @@ class Player:
 
                 danger_score[team_idx][u_id] = self.danger_score_of_point(np_unit_pos, u, team_idx, DANGER_ZONE_RADIUS)
 
-        return danger_score
+        return danger_score"""
 
     def wall_forces(self, current_point) -> List[Tuple[Tuple[float, float], float]]:
         current_x = current_point.x

@@ -14,8 +14,8 @@ from utils import *
 from players.default_player import Player as DefaultPlayer
 from players.g1_player import Player as G1_Player
 from players.g2_player import Player as G2_Player
-from players.g3_player import Player as G3_Player
-from players.g4_player import Player as G4_Player
+#from players.g3_player import Player as G3_Player
+#from players.g4_player import Player as G4_Player
 from players.g5_player import Player as G5_Player
 from players.g6_player import Player as G6_Player
 from players.g7_player import Player as G7_Player
